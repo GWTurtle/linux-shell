@@ -1,0 +1,532 @@
+
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include<dirent.h>
+
+/**
+*Task 1 & 2 - 1)read input
+*             2)parse input
+*             3)store into linkedlist
+*             4)print list;
+*/
+
+/**
+*Inserting to node
+*/
+struct node {
+    char *data;
+    struct node* next;
+};
+
+//create space for head
+struct node *head = NULL;
+
+//save to node
+void save_node( char* data) {
+	struct node *cursor = head;
+	
+	//make a link pointer
+	struct node *link = (struct node*) malloc(sizeof(struct node));
+	link->data = data;
+	
+	//point it to old first node
+	link->next = NULL;
+
+	if(head==NULL){
+		head=link;
+		return;
+	}
+	
+	//start from the beginning
+	while(cursor != NULL && cursor->next!=NULL ) {
+		cursor = cursor->next;
+	}
+	
+	cursor->next=link;
+}
+
+//read input
+void command_input(){
+
+	//read inputs
+	int input_size=5000;
+	char* input= (char *)malloc(input_size * sizeof(char));
+ 	fgets(input,input_size,stdin); 	
+ 	
+
+    //removal of endl as fgets also store \n
+	int j=0;
+	while(input!=NULL && input[j]!='\0'){
+		j++;
+	}
+	j--;
+	
+	input[j]='\0';
+
+    //parsing
+	char* tok;
+	tok = strtok(input," ");
+		
+    //saved parsed to node
+	while (tok != 0) {
+		save_node(strdup(tok));
+		tok = strtok(0," ");
+	}
+	free(input);
+}	
+
+//print the linked list
+void print_linked_list() {
+	struct node *cursor = head;
+	
+	if(head!=NULL){
+		printf("\nCommands: %s  ",cursor->data);
+		int flag=0;
+		while(cursor != NULL) {
+			if(flag==1){	
+				printf("%s ",cursor->data);
+				flag=0;
+			}
+			if(strcmp(cursor->data, "|") == 0){
+				flag=1;
+			}
+			cursor = cursor->next;
+		}
+		
+		printf(" \n");
+		cursor =head;
+		//start from the beginning
+		while(cursor != NULL) {
+			
+			if(strcmp(cursor->data, "|") == 0){
+				printf("\n");
+			}
+			else
+				printf("%s ",cursor->data);
+			cursor = cursor->next;
+		}
+		printf(" \n\n");
+	}
+	
+}
+
+/**
+*Task 3 - executing commands
+*/
+
+//cd command
+void command_cd(char** args){
+
+	char s[100]; 
+	if(args[1]==NULL){
+		//chdir(".."); 
+		printf("%s\n", getcwd(s, 100));
+		return;
+	}
+	
+	//changing directory
+	chdir(args[1]);
+	printf("%s\n", getcwd(s, 100));
+}
+
+//ls command
+void command_ls(){
+	struct dirent ** namelist;
+	
+	int n =scandir(".", &namelist, NULL, alphasort);
+	
+	if(n<0){
+		perror("directory error");
+		exit(EXIT_FAILURE);
+	}
+	else{
+		while(n--){
+			printf("%s  ",namelist[n]->d_name);
+			free(namelist[n]);
+		}
+		free(namelist);
+	}
+}
+
+//cd or ls, internal commands
+int cd_or_ls(char **args) {
+
+	if(strcmp(args[0], "cd") == 0){ // if cd Command Enters
+		command_cd(args);
+		return 1;
+	}
+	if(strcmp(args[0], "ls") == 0){ // if ls Command Enters
+		command_ls();
+		return 1;
+	}
+
+  return 0;
+}
+
+//converting linked list to array to perform execution
+char ** convertToArray(int *waitFlag){
+	char** arg=(char **)malloc(500 * sizeof(char*));
+	
+	struct node *cursor = head;
+	struct node *temp = NULL;
+	int i=0;
+
+	while(cursor != NULL) {
+		arg[i]=cursor->data;
+		i++;
+		temp=cursor;
+		cursor = cursor->next;
+		free(temp);
+	}
+	arg[i] = NULL;
+	head=NULL;
+	
+	if(i>0 && strcmp(arg[i-1],"&")==0){
+		arg[i-1] = NULL;
+		*waitFlag=1;
+		}
+		
+	return arg;
+}
+
+// input redirection
+int redirect_input(char **args, char **input_filename) {
+  int i;
+  int j;
+
+  for(i = 0; args[i] != NULL; i++) {
+
+    // Look for the <
+    if(args[i][0] == '<') {
+      free(args[i]);
+
+    // Read the file
+      if(args[i+1] != NULL) {
+        *input_filename = args[i+1];
+      } else {
+	    return -1;
+      }
+
+    // Adjust the rest of the arguments in the array
+    for(j = i; args[j-1] != NULL; j++) {
+	    args[j] = args[j+2];
+      }
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+//check for output redirection
+int redirect_output(char **args, char **output_filename) {
+  int i;
+  int j;
+
+  for(i = 0; args[i] != NULL; i++) {
+
+    // Look for the >
+    if(args[i][0] == '>') {
+      free(args[i]);
+
+      // Get the filename 
+      if(args[i+1] != NULL) {
+		*output_filename = args[i+1];
+      } 
+      else {
+		return -1;
+      }
+
+      // Adjust the rest of the arguments in the array
+      for(j = i; args[j-1] != NULL; j++) {
+	args[j] = args[j+2];
+      }
+
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+//checks for the pipe
+int check_pipe(char **args,char** left){
+	int i;
+	for(i=0;args[i] != NULL;i++){
+
+	// Look for the |
+	if(args[i][0] == '|') {
+		free(args[i]);
+
+	// Get the left
+	int j;
+	for(j=0;j<i;j++){ 
+		if(args[j] != NULL) {
+			left[j] = args[j];
+		}
+		else {
+			return -1;
+		}
+	}
+	left[j] = NULL;
+
+	// Adjust the rest of the arguments in the array
+	int k;
+	for(j = i+1 ,k=0; args[j] != NULL; j++,k++) {
+		args[k] = args[j];
+	}
+	    args[k] = NULL;
+		
+		return 1;
+		}
+	}
+	return 0;
+}
+
+int only_check_for_pipe(char **args){
+	int i;
+	for(i=0;args[i] != NULL;i++){
+
+		// Look for the |
+		if(args[i][0] == '|') {
+			return 1;
+			}
+	}
+	return 0;
+
+}
+
+void check_redirection(int* input,int* output,char **args,char **input_filename,char **output_filename) {
+
+    // Check for redirected input
+    *input = redirect_input(args, input_filename);
+
+    switch(*input) {
+    case -1:
+      printf("Syntax error!\n");
+      //continue;
+      break;
+    case 0:
+      break;
+    case 1:
+      printf("Redirecting input from: %s\n", *input_filename);
+      break;
+    }
+
+    // Check for redirected output
+    *output = redirect_output(args, output_filename);
+
+    switch(*output) {
+    case -1:
+      printf("Syntax error!\n");
+      //continue;
+
+      break;
+    case 0:
+      break;
+    case 1:
+      printf("Redirecting output to: %s\n", *output_filename);
+      break;
+    case 2:
+      printf("Appending output to the end of %s\n",*output_filename);
+      break;
+    }
+}
+
+void intHandler(int signum) {
+	if(signum==SIGTTOU){ //SIGTTOU
+		printf("SIGTTOU ... Demand Terminal Output control ...\n");
+	}
+	
+	else if(signum==SIGCHLD ){ //SIGCHLD 
+		printf("SIGCHLD ... Wait for another signal ...\n");
+		signal(SIGCHLD, SIG_DFL); //Deactivate the signal handler
+	}
+	
+	else if(signum==SIGTTIN){ //SIGTTIN
+		printf("SIGTTIN ... Demand Terminal Input control ...\n");
+		fflush(stdout);
+	}
+}
+
+//execution command
+int command_execution(char **args,int waitFlag) {
+
+	int result,result1;
+	pid_t child_id,child_id1;
+	int status,status1;
+	int p[2];
+
+	char ** left = (char **)malloc(100 * sizeof(char *));
+
+	if(args==NULL){
+		exit(-1);
+	}
+
+	if(only_check_for_pipe(args)==1){
+		check_pipe(args, left);
+		pipe(p);
+	
+		// Fork the child process
+		child_id = fork();
+	
+		// Check for errors in fork()
+		switch(child_id) {
+		  case EAGAIN:
+			perror("Error EAGAIN: ");
+			return 0;
+		  case ENOMEM:
+			perror("Error ENOMEM: ");
+			return 0;
+		}
+	
+		if(child_id == 0) {
+			int input=0;
+			int output=0;
+			char* output_filename=NULL;
+			char* input_filename=NULL;
+	
+			check_redirection(&input,&output,left,&input_filename, &output_filename);
+			// Set up redirection in the child process
+			if(input)
+				freopen(input_filename, "r", stdin);
+	
+			if(output==1)
+				freopen(output_filename, "w+", stdout);
+			if (output == 2)
+	            freopen(output_filename, "a", stdout);
+	
+			close(1);
+			dup(p[1]);
+			close(p[0]);
+			close(p[1]);
+			
+			if(waitFlag==1){
+				setsid();		
+				setpgid(0, 0);
+			}
+			
+			if(cd_or_ls(left)) // Check if enternal command is entered
+				exit(0);
+			
+			result = execvp(left[0],left);	
+			printf("\nERROR! INVALID COMMAND.\n");
+			exit(-1);
+		}
+
+		// Wait for the child process to complete
+		if(waitFlag==0)
+			result = waitpid(child_id, &status, 0);
+	
+		child_id1 = fork();
+		
+		// Check for errors in fork()
+		switch(child_id1) {
+		  case EAGAIN:
+			perror("Error: EAGAIN: ");
+			return 0;
+		  case ENOMEM:
+			perror("Error: ENOMEM: ");
+			return 0;
+			}
+	
+		if(child_id1 == 0) {
+			close(0);
+			dup(p[0]);
+			close(p[0]);
+			close(p[1]);	
+			command_execution(args,waitFlag);
+			exit(0);
+		}
+	
+		close(p[0]);
+		close(p[1]);
+		
+		if(waitFlag==0)
+			result1 = waitpid(child_id1, &status1, 0);
+		}
+	
+
+	else{
+		
+		// Fork the child process
+		child_id = fork();
+	
+		// Check for errors in fork()
+		switch(child_id) {
+		case EAGAIN:
+			perror("Error EAGAIN: ");
+			return 0;
+		case ENOMEM:
+			perror("Error ENOMEM: ");
+			return 0;
+		}
+	
+		if(child_id == 0) {
+	
+			int input=0;
+			int output=0;
+			char *output_filename=NULL;
+			char *input_filename=NULL;
+	
+			check_redirection(&input,&output,args,&input_filename, &output_filename);
+	
+			// Set up redirection in the child process
+			if(input){
+				freopen(input_filename, "r", stdin);
+			}
+			
+			if(output==1){
+				freopen(output_filename, "w+", stdout);
+			}
+		  
+			if (output == 2) {
+			        freopen(output_filename, "a+", stdout);
+			}
+	
+			if(waitFlag==1){
+				setsid();		
+				setpgid(0, 0);
+			}
+		
+			if(cd_or_ls(args)) // Check if enternal command is entered
+				exit(0);
+	
+			result = execvp(args[0],args);
+			printf("\nERROR! INVALID COMMAND.\n");
+			exit(-1);
+		}
+		if(waitFlag==0)
+			result = waitpid(child_id, &status, 0);
+	   }
+	}
+
+void main() {
+	char **input=NULL; 
+	while(1) {
+		printf("\n~Enter Command &>> ");
+		
+		command_input();
+		
+		print_linked_list();
+		int waitFlag=0;
+		input=convertToArray(&waitFlag);
+
+		if(input==NULL){
+			continue;
+		}
+		if(input[0] == NULL)
+			continue;
+		
+		command_execution(input,waitFlag);
+	}
+}
+
+
+
